@@ -22,6 +22,10 @@ EXPECTED_PATH = [
 EXPECTED_NODE_IDS = {"start", "retrieval", "llm", "answer"}
 EXPECTED_EDGE_PAIRS = set(EXPECTED_PATH)
 PROMPT_INSTRUCTION = "Answer the question using only the supplied context."
+MAX_QUERY_LENGTH = 500
+MAX_WORKFLOW_ID_LENGTH = 64
+MAX_CONTEXT_CHARS = 6000
+MAX_PROMPT_CHARS = 8000
 
 
 class WorkflowPreviewService:
@@ -41,7 +45,10 @@ class WorkflowPreviewService:
         if not db.session.get(KnowledgeBase, knowledge_base_id):
             raise NotFoundError("Knowledge base not found")
 
-        retrieved_chunks = RagService().retrieve(knowledge_base_id, query, top_k)
+        try:
+            retrieved_chunks = RagService().retrieve(knowledge_base_id, query, top_k)
+        except ValueError as error:
+            raise NotFoundError(str(error)) from error
         citations = [
             {
                 "chunk_id": chunk["chunk_id"],
@@ -74,10 +81,17 @@ class WorkflowPreviewService:
     def _validate_query(self, query):
         if not isinstance(query, str) or not query.strip():
             raise ValidationError("Query is required")
-        return query.strip()
+        value = query.strip()
+        if len(value) > MAX_QUERY_LENGTH:
+            raise ValidationError(f"Query must be {MAX_QUERY_LENGTH} characters or fewer")
+        return value
 
     def _validate_workflow_id(self, workflow_id):
-        value = workflow_id or "default"
+        value = "default" if workflow_id is None or workflow_id == "" else workflow_id
+        if not isinstance(value, str):
+            raise ValidationError("workflow_id must be a string")
+        if len(value) > MAX_WORKFLOW_ID_LENGTH:
+            raise ValidationError(f"workflow_id must be {MAX_WORKFLOW_ID_LENGTH} characters or fewer")
         if value != "default":
             raise ValidationError("workflow_id must be default")
         return value
@@ -127,13 +141,30 @@ class WorkflowPreviewService:
         return value
 
     def _build_prompt(self, query, chunks):
-        context = "\n\n".join(
-            f"[{index}] {chunk['document_name']} (score: {chunk['score']}):\n{chunk['content']}"
-            for index, chunk in enumerate(chunks, start=1)
-        )
-        return (
+        context = self._build_context(chunks)
+        prompt = (
             f"{PROMPT_INSTRUCTION}\n\n"
             f"Context:\n{context or 'No context was retrieved.'}\n\n"
             f"Question:\n{query}\n\n"
             "Answer:"
         )
+        if len(prompt) > MAX_PROMPT_CHARS:
+            raise ValidationError("Prompt exceeds the maximum allowed size")
+        return prompt
+
+    def _build_context(self, chunks):
+        parts = []
+        remaining = MAX_CONTEXT_CHARS
+        for index, chunk in enumerate(chunks, start=1):
+            header = f"[{index}] {chunk['document_name']} (score: {chunk['score']}):\n"
+            if len(header) >= remaining:
+                break
+
+            available_content_chars = remaining - len(header)
+            content = chunk["content"][:available_content_chars]
+            part = f"{header}{content}"
+            parts.append(part)
+            remaining -= len(part) + 2
+            if remaining <= 0:
+                break
+        return "\n\n".join(parts)

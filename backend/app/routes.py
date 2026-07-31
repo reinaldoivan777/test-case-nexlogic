@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
 from flask_cors import CORS
+from werkzeug.exceptions import RequestEntityTooLarge
 
 from .extensions import db
 from .models import KnowledgeBase, WorkflowRun
@@ -49,6 +50,11 @@ DEFAULT_WORKFLOW = {
 
 def error_response(code, message, status):
     return jsonify({"error": {"code": code, "message": message}}), status
+
+
+@api.app_errorhandler(RequestEntityTooLarge)
+def request_entity_too_large(error):
+    return error_response("validation_error", "Request body is too large", 413)
 
 
 @api.get("/health")
