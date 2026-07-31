@@ -19,6 +19,7 @@ EXPECTED_PATH = [
     ("retrieval", "llm"),
     ("llm", "answer"),
 ]
+PROMPT_INSTRUCTION = "Answer the question using only the supplied context."
 
 
 class WorkflowPreviewService:
@@ -32,7 +33,6 @@ class WorkflowPreviewService:
         self._validate_edges(payload.get("edges"))
 
         retrieval_data = nodes["retrieval"].get("data") or {}
-        llm_data = nodes["llm"].get("data") or {}
         knowledge_base_id = self._validate_knowledge_base_id(retrieval_data.get("knowledge_base_id"))
         top_k = self._validate_top_k(retrieval_data.get("top_k"))
 
@@ -48,7 +48,7 @@ class WorkflowPreviewService:
             }
             for chunk in retrieved_chunks
         ]
-        prompt = self._build_prompt(query, retrieved_chunks, llm_data.get("prompt_template"))
+        prompt = self._build_prompt(query, retrieved_chunks)
         answer = LlmService().generate(prompt)
         trace = [
             {"node_id": "start", "status": "succeeded"},
@@ -111,18 +111,13 @@ class WorkflowPreviewService:
             raise ValidationError("top_k must be between 1 and 5")
         return value
 
-    def _build_prompt(self, query, chunks, prompt_template):
-        instruction = (
-            prompt_template.strip()
-            if isinstance(prompt_template, str) and prompt_template.strip()
-            else "Answer the question using only the supplied context."
-        )
+    def _build_prompt(self, query, chunks):
         context = "\n\n".join(
             f"[{index}] {chunk['document_name']} (score: {chunk['score']}):\n{chunk['content']}"
             for index, chunk in enumerate(chunks, start=1)
         )
         return (
-            f"{instruction}\n\n"
+            f"{PROMPT_INSTRUCTION}\n\n"
             f"Context:\n{context or 'No context was retrieved.'}\n\n"
             f"Question:\n{query}\n\n"
             "Answer:"
