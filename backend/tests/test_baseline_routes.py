@@ -71,3 +71,75 @@ def test_preview_workflow_persists_run_and_history(client, monkeypatch):
     history = client.get("/api/runs?workflow_id=default").get_json()["data"]
     assert len(history) == 1
     assert history[0]["id"] == body["id"]
+
+
+def test_preview_workflow_rejects_graph_with_extra_node(client):
+    workflow = client.get("/api/workflows/default").get_json()["data"]
+    workflow["nodes"].append(
+        {
+            "id": "extra",
+            "type": "llm",
+            "position": {"x": 1000, "y": 160},
+            "data": {"label": "Extra"},
+        }
+    )
+    for node in workflow["nodes"]:
+        if node["id"] == "retrieval":
+            node["data"]["knowledge_base_id"] = "nexlogic-handbook"
+
+    response = client.post(
+        "/api/workflows/preview",
+        json={
+            "workflow_id": "default",
+            "query": "How does RAG work?",
+            "nodes": workflow["nodes"],
+            "edges": workflow["edges"],
+        },
+    )
+
+    body = response.get_json()
+    assert response.status_code == 400
+    assert body["error"]["code"] == "validation_error"
+
+
+def test_preview_workflow_rejects_graph_with_extra_edge(client):
+    workflow = client.get("/api/workflows/default").get_json()["data"]
+    workflow["edges"].append({"id": "answer-start", "source": "answer", "target": "start"})
+    for node in workflow["nodes"]:
+        if node["id"] == "retrieval":
+            node["data"]["knowledge_base_id"] = "nexlogic-handbook"
+
+    response = client.post(
+        "/api/workflows/preview",
+        json={
+            "workflow_id": "default",
+            "query": "How does RAG work?",
+            "nodes": workflow["nodes"],
+            "edges": workflow["edges"],
+        },
+    )
+
+    body = response.get_json()
+    assert response.status_code == 400
+    assert body["error"]["code"] == "validation_error"
+
+
+def test_preview_workflow_rejects_unknown_workflow_id(client):
+    workflow = client.get("/api/workflows/default").get_json()["data"]
+    for node in workflow["nodes"]:
+        if node["id"] == "retrieval":
+            node["data"]["knowledge_base_id"] = "nexlogic-handbook"
+
+    response = client.post(
+        "/api/workflows/preview",
+        json={
+            "workflow_id": "custom",
+            "query": "How does RAG work?",
+            "nodes": workflow["nodes"],
+            "edges": workflow["edges"],
+        },
+    )
+
+    body = response.get_json()
+    assert response.status_code == 400
+    assert body["error"]["code"] == "validation_error"

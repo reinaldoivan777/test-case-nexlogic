@@ -19,6 +19,8 @@ EXPECTED_PATH = [
     ("retrieval", "llm"),
     ("llm", "answer"),
 ]
+EXPECTED_NODE_IDS = {"start", "retrieval", "llm", "answer"}
+EXPECTED_EDGE_PAIRS = set(EXPECTED_PATH)
 PROMPT_INSTRUCTION = "Answer the question using only the supplied context."
 
 
@@ -27,7 +29,7 @@ class WorkflowPreviewService:
         if not isinstance(payload, dict):
             raise ValidationError("Request body must be a JSON object")
 
-        workflow_id = payload.get("workflow_id") or "default"
+        workflow_id = self._validate_workflow_id(payload.get("workflow_id"))
         query = self._validate_query(payload.get("query"))
         nodes = self._validate_nodes(payload.get("nodes"))
         self._validate_edges(payload.get("edges"))
@@ -74,16 +76,25 @@ class WorkflowPreviewService:
             raise ValidationError("Query is required")
         return query.strip()
 
+    def _validate_workflow_id(self, workflow_id):
+        value = workflow_id or "default"
+        if value != "default":
+            raise ValidationError("workflow_id must be default")
+        return value
+
     def _validate_nodes(self, nodes):
         if not isinstance(nodes, list):
             raise ValidationError("Nodes must be provided")
+        if len(nodes) != len(EXPECTED_NODE_IDS):
+            raise ValidationError("Graph must contain exactly Start, Retrieval, LLM, and Answer nodes")
 
         by_id = {node.get("id"): node for node in nodes if isinstance(node, dict)}
-        missing = [node_id for node_id in ("start", "retrieval", "llm", "answer") if node_id not in by_id]
-        if missing:
-            raise ValidationError("Graph must include Start, Retrieval, LLM, and Answer nodes")
+        if len(by_id) != len(nodes):
+            raise ValidationError("Graph contains duplicate or invalid nodes")
+        if set(by_id) != EXPECTED_NODE_IDS:
+            raise ValidationError("Graph must contain exactly Start, Retrieval, LLM, and Answer nodes")
 
-        for node_id in ("start", "retrieval", "llm", "answer"):
+        for node_id in EXPECTED_NODE_IDS:
             if by_id[node_id].get("type") != node_id:
                 raise ValidationError("Graph contains an invalid node type")
 
@@ -92,10 +103,14 @@ class WorkflowPreviewService:
     def _validate_edges(self, edges):
         if not isinstance(edges, list):
             raise ValidationError("Edges must be provided")
+        if len(edges) != len(EXPECTED_EDGE_PAIRS):
+            raise ValidationError("Graph must contain exactly Start → Retrieval → LLM → Answer edges")
 
         pairs = {(edge.get("source"), edge.get("target")) for edge in edges if isinstance(edge, dict)}
-        if any(pair not in pairs for pair in EXPECTED_PATH):
-            raise ValidationError("Graph must connect Start → Retrieval → LLM → Answer")
+        if len(pairs) != len(edges):
+            raise ValidationError("Graph contains duplicate or invalid edges")
+        if pairs != EXPECTED_EDGE_PAIRS:
+            raise ValidationError("Graph must connect exactly Start → Retrieval → LLM → Answer")
 
     def _validate_knowledge_base_id(self, knowledge_base_id):
         if not isinstance(knowledge_base_id, str) or not knowledge_base_id.strip():
