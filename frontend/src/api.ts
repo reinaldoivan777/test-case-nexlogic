@@ -1,4 +1,5 @@
-import type { KnowledgeBase, Workflow, WorkflowRun } from "./types";
+import type { Edge } from "@xyflow/react";
+import type { KnowledgeBase, Workflow, WorkflowNode, WorkflowRun } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5050/api";
 
@@ -20,9 +21,9 @@ export const api = {
   getKnowledgeBases: () => request<{ data: KnowledgeBase[] }>("/knowledge-bases"),
   getDefaultWorkflow: () => request<{ data: Workflow }>("/workflows/default"),
   getRuns: () => request<{ data: WorkflowRun[] }>("/runs?workflow_id=default"),
-  previewWorkflow: (query: string, workflow: Workflow | null) =>
+  previewWorkflow: (query: string, workflowId: string | undefined, nodes: WorkflowNode[], edges: Edge[]) =>
     request<WorkflowRun>("/workflows/preview", {
       method: "POST",
-      body: JSON.stringify({ query, workflow_id: workflow?.id, nodes: workflow?.nodes, edges: workflow?.edges }),
+      body: JSON.stringify({ query, workflow_id: workflowId, nodes, edges }),
     }),
 };

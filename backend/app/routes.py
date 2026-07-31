@@ -1,8 +1,11 @@
 from flask import Blueprint, jsonify, request
 from flask_cors import CORS
 
-from .models import KnowledgeBase
-from .services.llm_service import LlmService
+from .extensions import db
+from .models import KnowledgeBase, WorkflowRun
+from .services.embedding_service import EmbeddingUnavailableError
+from .services.llm_service import LlmService, LlmUnavailableError
+from .services.workflow_preview_service import NotFoundError, ValidationError, WorkflowPreviewService
 
 api = Blueprint("api", __name__, url_prefix="/api")
 CORS(api)
@@ -71,15 +74,27 @@ def get_default_workflow():
 
 @api.post("/workflows/preview")
 def preview_workflow():
-  prompt = request.get_json()
-  answer = LlmService
-  return jsonify(answer.generate(prompt, prompt.query))
+    payload = request.get_json(silent=True)
+    try:
+        run = WorkflowPreviewService().preview(payload)
+    except ValidationError as error:
+        return error_response("validation_error", str(error), 400)
+    except NotFoundError as error:
+        return error_response("not_found", str(error), 404)
+    except (EmbeddingUnavailableError, LlmUnavailableError) as error:
+        return error_response("provider_unavailable", str(error), 503)
+
+    return jsonify(run.to_dict()), 201
 
 
 @api.get("/runs")
 def list_runs():
-    return error_response(
-        "not_implemented",
-        "Candidate task: implement persisted preview history.",
-        501,
+    workflow_id = request.args.get("workflow_id") or "default"
+    runs = (
+        db.session.query(WorkflowRun)
+        .filter_by(workflow_id=workflow_id)
+        .order_by(WorkflowRun.created_at.desc())
+        .limit(20)
+        .all()
     )
+    return jsonify({"data": [run.to_dict() for run in runs]})

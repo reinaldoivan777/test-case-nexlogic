@@ -19,6 +19,7 @@ function Builder() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [query, setQuery] = useState("");
   const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [error, setError] = useState("");
   const [latestRun, setLatestRun] = useState<WorkflowRun | null>(null);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
@@ -28,6 +29,19 @@ function Builder() {
       node.id === "retrieval" ? { ...node, data: { ...node.data, ...changes } } : node
     )));
   }, [setNodes]);
+
+  const loadRuns = useCallback(async () => {
+    setIsHistoryLoading(true);
+    try {
+      const response = await api.getRuns();
+      setRuns(response.data);
+      setLatestRun((currentRun) => currentRun || response.data[0] || null);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Unable to load preview history");
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     async function loadBaseline() {
@@ -39,26 +53,41 @@ function Builder() {
         const workflow = workflowResponse.data;
         const knowledgeBases = knowledgeBaseResponse.data;
         setAppState({ workflow, knowledgeBases });
-        setNodes(workflow.nodes.map((node) => ({
+        setNodes((workflow.nodes || []).map((node) => ({
           ...node,
           data: node.id === "retrieval"
             ? { ...node.data, knowledgeBases, onChange: updateRetrievalNode }
             : node.data,
         })));
-        setEdges(workflow.edges);
+        setEdges(workflow.edges || []);
+        await loadRuns();
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Unable to load the baseline workflow");
       }
     }
     void loadBaseline();
-  }, [setEdges, setNodes, updateRetrievalNode]);
+  }, [loadRuns, setEdges, setNodes, updateRetrievalNode]);
 
   const nodeTypes = useMemo(() => ({ start: BaseNode, retrieval: RetrievalNode, llm: BaseNode, answer: BaseNode }), []);
 
   const previewWorkflow = async () => {
-    setError("Candidate task: implement Preview workflow integration.");
-    api.previewWorkflow(query, appState.workflow);
+    setError("");
+    setIsPreviewing(true);
+    try {
+      const run = await api.previewWorkflow(query, appState.workflow?.id, nodes, edges);
+      setLatestRun(run);
+      await loadRuns();
+    } catch (previewError) {
+      setError(previewError instanceof Error ? previewError.message : "Unable to preview workflow");
+    } finally {
+      setIsPreviewing(false);
+    }
   };
+
+  const formatTimestamp = (value: string) => new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 
   return (
     <main className="app-shell">
@@ -119,18 +148,71 @@ function Builder() {
             placeholder="How does a Nexlogic RAG workflow work?"
             rows={5}
           />
-          <button type="button" onClick={() => void previewWorkflow()} disabled={isPreviewing}>
+          <button type="button" onClick={() => void previewWorkflow()} disabled={isPreviewing || !query.trim()}>
             {isPreviewing ? "Running preview…" : "Preview workflow"}
           </button>
 
           <section className="result-section">
             <h3>Answer</h3>
-            {latestRun ? <p>{latestRun.answer}</p> : <p className="placeholder">Run the workflow to inspect its answer and citations.</p>}
+            {isPreviewing ? (
+              <p className="placeholder">Generating answer…</p>
+            ) : latestRun ? (
+              <p>{latestRun.answer}</p>
+            ) : (
+              <p className="placeholder">Run the workflow to inspect its answer and citations.</p>
+            )}
+          </section>
+
+          <section className="result-section">
+            <h3>Citations</h3>
+            {latestRun?.citations.length ? (
+              <ul className="result-list">
+                {latestRun.citations.map((citation) => (
+                  <li key={citation.chunk_id}>
+                    <span>{citation.document_name}</span>
+                    <strong>{citation.score.toFixed(2)}</strong>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="placeholder">Citations will appear after a successful preview.</p>
+            )}
+          </section>
+
+          <section className="result-section">
+            <h3>Execution trace</h3>
+            {latestRun?.trace.length ? (
+              <ol className="trace-list">
+                {latestRun.trace.map((item) => (
+                  <li key={item.node_id}>
+                    <span>{item.node_id}</span>
+                    <strong>{item.retrieved_count ? `${item.status} · ${item.retrieved_count} chunks` : item.status}</strong>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="placeholder">Trace events will appear after a successful preview.</p>
+            )}
           </section>
 
           <section className="result-section">
             <h3>Recent runs</h3>
-            {runs.length ? <p>{runs.length} saved run(s)</p> : <p className="placeholder">Preview history will appear here.</p>}
+            {isHistoryLoading ? (
+              <p className="placeholder">Loading history…</p>
+            ) : runs.length ? (
+              <ul className="history-list">
+                {runs.map((run) => (
+                  <li key={run.id}>
+                    <button type="button" className="history-button" onClick={() => setLatestRun(run)}>
+                      <span>{run.query}</span>
+                      <small>{formatTimestamp(run.created_at)}</small>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="placeholder">Preview history will appear here.</p>
+            )}
           </section>
         </aside>
       </section>
