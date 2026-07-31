@@ -33,6 +33,22 @@ LLM disediakan evaluator melalui Ollama native API yang diekspos lewat ngrok. UR
 5. Render answer, citation, execution trace, history, serta empty/loading/error state.
 6. Tambahkan minimal satu test backend untuk successful preview atau validation error.
 
+## Improvement yang Sudah Dilakukan
+
+Selain memenuhi tugas kandidat, implementasi ini juga menambahkan hardening berikut:
+
+- Prompt instruction untuk LLM dikontrol penuh oleh backend. Backend tidak lagi mempercayai `prompt_template` yang dikirim dari graph frontend, sehingga caller tidak dapat mengganti instruksi RAG melalui payload API.
+- Validasi graph diperketat untuk workflow `default`. Preview hanya menerima tepat empat node (`start`, `retrieval`, `llm`, `answer`) dan tepat tiga edge `Start → Retrieval → LLM → Answer`; extra node, duplicate node, extra edge, duplicate edge, cycle, atau `workflow_id` selain `default` akan ditolak.
+- Batas ukuran input ditambahkan untuk mengurangi risiko abuse, biaya LLM berlebih, dan pertumbuhan data yang tidak terkendali:
+  - request body maksimum `16 KB` melalui `MAX_CONTENT_LENGTH`;
+  - `query` maksimum `500` karakter;
+  - `workflow_id` maksimum `64` karakter;
+  - context prompt maksimum `6000` karakter;
+  - prompt final maksimum `8000` karakter.
+- Error handling backend dinormalisasi. Payload terlalu besar mengembalikan error JSON `413`, input/graph tidak valid mengembalikan `400`, knowledge base yang tidak ditemukan mengembalikan `404`, dan provider embedding/LLM yang tidak tersedia mengembalikan `503`.
+- `ValueError` dari `RagService.retrieve()` dipetakan menjadi `404` agar tidak bocor sebagai internal server error.
+- Test backend diperluas untuk successful preview, history, prompt-template injection, validasi graph, batas query/request body, dan mapping retrieval error.
+
 ## Kontrak API
 
 ### `POST /api/workflows/preview`
